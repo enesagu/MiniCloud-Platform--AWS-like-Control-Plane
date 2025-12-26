@@ -26,18 +26,27 @@ class Database:
     def is_connected(self) -> bool:
         return self._pool is not None
     
-    async def connect(self) -> None:
-        """Initialize database connection pool"""
-        if self._pool is None:
+    async def connect(self, retries: int = 5, delay: float = 2.0) -> None:
+        """Initialize database connection pool with retry logic"""
+        import asyncio
+        
+        for attempt in range(retries):
+            if self._pool is not None:
+                return
             try:
                 self._pool = await asyncpg.create_pool(
                     database_config.url,
                     min_size=database_config.min_connections,
                     max_size=database_config.max_connections
                 )
-                print("✅ Connected to PostgreSQL")
+                print(f"✅ Connected to PostgreSQL at {database_config.url.split('@')[1] if '@' in database_config.url else database_config.url}")
+                return
             except Exception as e:
-                print(f"⚠️ Database connection failed: {e}")
+                print(f"⚠️ Database connection attempt {attempt + 1}/{retries} failed: {e}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(delay * (attempt + 1))
+        
+        print("❌ Could not connect to database after all retries")
     
     async def disconnect(self) -> None:
         """Close database connection pool"""
