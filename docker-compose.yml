@@ -1,0 +1,251 @@
+version: '3.8'
+
+services:
+  # =====================================================
+  # CONTROL PLANE
+  # =====================================================
+  
+  # 1. API Gateway (Control Plane Core)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: minicloud_api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - nats
+      - minio
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/minicloud
+      - NATS_URL=nats://nats:4222
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - TEMPORAL_HOST=temporal:7233
+      - JWT_SECRET=supersecretkey_change_in_production
+    volumes:
+      - ./api:/app/api
+      - ./core:/app/core
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # =====================================================
+  # DATA PLANE - Storage
+  # =====================================================
+  
+  # 2. PostgreSQL (Resource Registry + IAM + Audit)
+  db:
+    image: postgres:15-alpine
+    container_name: minicloud_db
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=minicloud
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. MinIO (S3-compatible Object Storage)
+  minio:
+    image: minio/minio:latest
+    container_name: minicloud_minio
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_NOTIFY_NATS_ENABLE=on
+      - MINIO_NOTIFY_NATS_ADDRESS=nats:4222
+      - MINIO_NOTIFY_NATS_SUBJECT=minio.events
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # =====================================================
+  # DATA PLANE - Events & Messaging
+  # =====================================================
+  
+  # 4. NATS (Event Bus - EventBridge benzeri)
+  nats:
+    image: nats:2.10-alpine
+    container_name: minicloud_nats
+    ports:
+      - "4222:4222"   # Client connections
+      - "8222:8222"   # HTTP monitoring
+    command: 
+      - "--jetstream"
+      - "--http_port=8222"
+      - "--store_dir=/data"
+    volumes:
+      - nats_data:/data
+
+  # =====================================================
+  # DATA PLANE - Workflow Orchestration
+  # =====================================================
+  
+  # 5. Temporal Server (Step Functions benzeri)
+  temporal:
+    image: temporalio/auto-setup:1.22
+    container_name: minicloud_temporal
+    ports:
+      - "7233:7233"   # gRPC
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=postgres
+      - POSTGRES_SEEDS=db
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # 6. Temporal Web UI
+  temporal-ui:
+    image: temporalio/ui:2.21.0
+    container_name: minicloud_temporal_ui
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    depends_on:
+      - temporal
+
+  # 7. Temporal Worker (Workflow & Activity execution)
+  temporal-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minicloud_temporal_worker
+    depends_on:
+      - temporal
+      - db
+      - minio
+      - nats
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/minicloud
+      - NATS_URL=nats://nats:4222
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - ./workers:/app/workers
+      - ./core:/app/core
+    command: python workers/main.py
+
+  # =====================================================
+  # DATA PLANE - Batch Processing
+  # =====================================================
+  
+  # 8. Airflow (ETL & Batch Jobs)
+  airflow:
+    image: apache/airflow:2.8.0-python3.10
+    container_name: minicloud_airflow
+    ports:
+      - "8081:8080"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@db:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=your_fernet_key_here
+      - AIRFLOW__WEBSERVER__SECRET_KEY=your_secret_key_here
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      bash -c "airflow db init && 
+               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
+               airflow webserver & airflow scheduler"
+
+  # =====================================================
+  # OBSERVABILITY
+  # =====================================================
+  
+  # 9. Prometheus (Metrics)
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: minicloud_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  # 10. Grafana (Dashboards)
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: minicloud_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+
+  # 11. Loki (Logs)
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: minicloud_loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+
+  # =====================================================
+  # EVENT ROUTER (Custom Service)
+  # =====================================================
+  
+  # 12. Event Router (NATS -> Temporal/Function dispatcher)
+  event-router:
+    build:
+      context: .
+      dockerfile: Dockerfile.router
+    container_name: minicloud_event_router
+    depends_on:
+      - nats
+      - temporal
+      - db
+    environment:
+      - NATS_URL=nats://nats:4222
+      - TEMPORAL_HOST=temporal:7233
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/minicloud
+    volumes:
+      - ./core:/app/core
+    command: python core/event_router.py
+
+volumes:
+  postgres_data:
+  minio_data:
+  nats_data:
+  airflow_logs:
+  prometheus_data:
+  grafana_data:
+  loki_data:
