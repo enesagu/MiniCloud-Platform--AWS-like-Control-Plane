@@ -494,6 +494,106 @@ async def get_usage(project_id: str):
 
 
 # =====================================================
+# INSTANCES ROUTER (EC2-like)
+# =====================================================
+
+instance_router = APIRouter(prefix="/api/v1", tags=["Instances"])
+
+
+@instance_router.post("/projects/{project_id}/instances")
+async def create_instance(project_id: str, body: Dict[str, Any]):
+    """
+    Launch a new instance (EC2 RunInstances equivalent)
+    This triggers a Temporal workflow for provisioning
+    """
+    service = ServiceFactory.get_instance_service()
+    return await service.create(project_id, body)
+
+
+@instance_router.get("/projects/{project_id}/instances")
+async def list_instances(project_id: str, state: Optional[str] = None):
+    """List all instances in a project"""
+    service = ServiceFactory.get_instance_service()
+    return await service.list_by_project(project_id, state)
+
+
+@instance_router.get("/instances/{instance_id}")
+async def get_instance(instance_id: str):
+    """Get instance details"""
+    service = ServiceFactory.get_instance_service()
+    result = await service.get(instance_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return result
+
+
+@instance_router.post("/instances/{instance_id}/stop")
+async def stop_instance(instance_id: str):
+    """Stop an instance (pause)"""
+    service = ServiceFactory.get_instance_service()
+    return await service.stop(instance_id)
+
+
+@instance_router.post("/instances/{instance_id}/start")
+async def start_instance(instance_id: str):
+    """Start a stopped instance"""
+    service = ServiceFactory.get_instance_service()
+    return await service.start(instance_id)
+
+
+@instance_router.post("/instances/{instance_id}/terminate")
+async def terminate_instance(instance_id: str, force: bool = Query(False)):
+    """Terminate an instance (destroy)"""
+    service = ServiceFactory.get_instance_service()
+    return await service.terminate(instance_id, force)
+
+
+@instance_router.post("/instances/{instance_id}/reboot")
+async def reboot_instance(instance_id: str):
+    """Reboot an instance"""
+    service = ServiceFactory.get_instance_service()
+    return await service.reboot(instance_id)
+
+
+@instance_router.get("/instances/{instance_id}/events")
+async def get_instance_events(instance_id: str, limit: int = Query(50)):
+    """Get instance state transition events (audit trail)"""
+    service = ServiceFactory.get_instance_service()
+    return await service.get_events(instance_id, limit)
+
+
+# =====================================================
+# HOSTS ROUTER (Compute Nodes)
+# =====================================================
+
+host_router = APIRouter(prefix="/api/v1/hosts", tags=["Hosts"])
+
+
+@host_router.get("")
+async def list_hosts(status: Optional[str] = None, zone: Optional[str] = None):
+    """List all compute hosts"""
+    service = ServiceFactory.get_host_service()
+    return await service.list_all(status, zone)
+
+
+@host_router.get("/{host_id}")
+async def get_host(host_id: str):
+    """Get host details"""
+    service = ServiceFactory.get_host_service()
+    result = await service.get(host_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Host not found")
+    return result
+
+
+@host_router.get("/{host_id}/instances")
+async def list_host_instances(host_id: str):
+    """List instances on a specific host"""
+    service = ServiceFactory.get_instance_service()
+    return await service.list_by_host(host_id)
+
+
+# =====================================================
 # ROUTER COLLECTION
 # =====================================================
 
@@ -513,4 +613,7 @@ all_routers = [
     queue_router,
     audit_router,
     usage_router,
+    instance_router,
+    host_router,
 ]
+
