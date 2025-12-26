@@ -926,3 +926,142 @@ select.form-input { cursor: pointer; }
   max-width: 900px;
 }
 
+/* ========================================
+   Instance Page Styles
+   ======================================== */
+
+/* Page Tabs */
+.page-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding: 6px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+  width: fit-content;
+}
+
+.page-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.page-tab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.page-tab.active {
+  background: var(--color-accent);
+  color: white;
+}
+
+/* Resource Usage Bars */
+.resource-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 100px;
+}
+
+.resource-usage span {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.usage-bar {
+  height: 6px;
+  background: var(--color-bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.usage-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-accent), var(--color-purple));
+  border-radius: 3px;
+  transition: width var(--transition-normal);
+}
+
+/* Instance Detail */
+.instance-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.status.large {
+  font-size: 14px;
+  padding: 8px 16px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  padding: 20px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-label {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detail-value {
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+/* Instance Form */
+.instance-form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Modal Footer Actions */
+.modal-footer-actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  justify-content: flex-end;
+}
+
+/* Resource Icon Colors */
+.resource-icon.instance {
+  background: var(--color-accent-muted);
+  color: var(--color-accent);
+}
+
+.resource-icon.host {
+  background: var(--color-purple-muted);
+  color: var(--color-purple);
+}
+
+

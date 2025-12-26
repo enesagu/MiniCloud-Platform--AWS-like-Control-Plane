@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
-import { BarChart3, Code, Folder, GitBranch, Zap, Shield, Terminal, Bell, Inbox } from 'lucide-react'
+import { BarChart3, Code, Folder, GitBranch, Zap, Shield, Terminal, Bell, Inbox, Server } from 'lucide-react'
 import { Sidebar, Header } from './components/Layout'
-import { DashboardPage, BucketsPage, FunctionsPage, WorkflowsPage, EventRulesPage, TopicsPage, QueuesPage, IAMPage, AuditLogsPage } from './pages'
+import { DashboardPage, BucketsPage, FunctionsPage, WorkflowsPage, EventRulesPage, TopicsPage, QueuesPage, IAMPage, AuditLogsPage, InstancesPage } from './pages'
 
 // Navigation configuration
 const NAV_ITEMS = [
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { 
     section: 'Compute', 
     items: [
+      { id: 'instances', label: 'Instances', icon: Server },
       { id: 'functions', label: 'Functions', icon: Code },
       { id: 'workflows', label: 'Workflows', icon: GitBranch },
     ]
@@ -54,6 +55,7 @@ const NAV_ITEMS = [
 // Page titles
 const PAGE_TITLES = {
   dashboard: { title: 'Dashboard', subtitle: 'Overview of your MiniCloud resources' },
+  instances: { title: 'Instances', subtitle: 'Virtual machines and containers' },
   functions: { title: 'Functions', subtitle: 'Serverless compute' },
   workflows: { title: 'Workflows', subtitle: 'Durable workflow orchestration' },
   buckets: { title: 'Buckets', subtitle: 'Object storage' },
@@ -67,6 +69,7 @@ const PAGE_TITLES = {
 // Page components mapping
 const PAGES = {
   dashboard: DashboardPage,
+  instances: InstancesPage,
   buckets: BucketsPage,
   functions: FunctionsPage,
   workflows: WorkflowsPage,

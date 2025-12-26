@@ -68,6 +68,33 @@ class ApiService {
   startWorkflow = (name, input = {}) => this.post(`/api/v1/workflows/${name}/start`, input)
   getWorkflowRuns = (name) => this.get(`/api/v1/workflows/${name}/runs`)
 
+  // Instances (EC2-like)
+  getInstances = (projectId = this.defaultProjectId, state = null) => {
+    let url = `/api/v1/projects/${projectId}/instances`
+    if (state) url += `?state=${state}`
+    return this.get(url)
+  }
+  getInstance = (instanceId) => this.get(`/api/v1/instances/${instanceId}`)
+  createInstance = (projectId, data) => this.post(`/api/v1/projects/${projectId}/instances`, data)
+  stopInstance = (instanceId) => this.post(`/api/v1/instances/${instanceId}/stop`, {})
+  startInstance = (instanceId) => this.post(`/api/v1/instances/${instanceId}/start`, {})
+  rebootInstance = (instanceId) => this.post(`/api/v1/instances/${instanceId}/reboot`, {})
+  terminateInstance = (instanceId, force = false) => this.post(`/api/v1/instances/${instanceId}/terminate?force=${force}`, {})
+  getInstanceEvents = (instanceId, limit = 50) => this.get(`/api/v1/instances/${instanceId}/events?limit=${limit}`)
+
+  // Hosts (Compute Nodes)
+  getHosts = (status = null, zone = null) => {
+    let url = '/api/v1/hosts'
+    const params = []
+    if (status) params.push(`status=${status}`)
+    if (zone) params.push(`zone=${zone}`)
+    if (params.length) url += '?' + params.join('&')
+    return this.get(url)
+  }
+  getHost = (hostId) => this.get(`/api/v1/hosts/${hostId}`)
+  getHostInstances = (hostId) => this.get(`/api/v1/hosts/${hostId}/instances`)
+
+
   // Event Rules
   getEventRules = (projectId = this.defaultProjectId) => this.get(`/api/v1/projects/${projectId}/event-rules`)
   createEventRule = (projectId, data) => this.post(`/api/v1/projects/${projectId}/event-rules`, data)

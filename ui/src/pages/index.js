@@ -7,4 +7,6 @@ export { TopicsPage } from './Topics'
 export { QueuesPage } from './Queues'
 export { IAMPage } from './IAM'
 export { AuditLogsPage } from './AuditLogs'
+export { InstancesPage } from './Instances'
+
 
