@@ -363,42 +363,141 @@ class FunctionService(BaseService):
         return {"id": function_id, "status": "DELETED"}
     
     async def invoke(self, function_id: str, payload: Dict = None) -> Dict:
-        # Get function code
+        """
+        Invoke a function - REAL Lambda-like execution
+        Executes the handler code and returns the actual result
+        """
+        import time
+        import traceback
+        import io
+        import sys
+        
+        start_time = time.time()
         function_code = ""
+        function_name = "unknown"
+        runtime = "python3.10"
+        logs = []
+        handler_result = None
+        status = "SUCCESS"
+        error_message = None
+        
         try:
             if db.is_connected:
                 # Update invocation count
                 await self.resource_repo.update_state(function_id, "invocation_count")
-                # Get function for code
+                
+                # Get function code and config
                 func = await db.fetchrow(
-                    "SELECT spec FROM resources WHERE id = $1 AND type = 'function'",
+                    "SELECT name, spec FROM resources WHERE id = $1 AND type = 'function'",
                     function_id
                 )
-                if func and func['spec']:
-                    import json
-                    spec = json.loads(func['spec']) if isinstance(func['spec'], str) else func['spec']
-                    function_code = spec.get('code', '')
+                if func:
+                    function_name = func['name']
+                    if func['spec']:
+                        spec = json.loads(func['spec']) if isinstance(func['spec'], str) else func['spec']
+                        function_code = spec.get('code', '')
+                        runtime = spec.get('runtime', 'python3.10')
         except Exception as e:
             print(f"⚠️ Could not get function: {e}")
+            logs.append(f"ERROR: Could not load function: {e}")
+        
+        logs.append(f"START RequestId: {function_id[:8]}")
+        logs.append(f"Function: {function_name}")
+        logs.append(f"Runtime: {runtime}")
+        
+        # Execute the code if we have it
+        if function_code and runtime.startswith('python'):
+            try:
+                # Capture stdout for logs
+                old_stdout = sys.stdout
+                captured_output = io.StringIO()
+                sys.stdout = captured_output
+                
+                # Create execution context
+                execution_context = {
+                    'function_id': function_id,
+                    'function_name': function_name,
+                    'memory_limit_mb': 128,
+                    'timeout_seconds': 30,
+                    'invoked_function_arn': f'arn:minicloud:function:{function_id}'
+                }
+                
+                # Execute the code in a namespace
+                namespace = {
+                    '__builtins__': __builtins__,
+                    'json': json,
+                }
+                
+                # Execute the function definition
+                exec(function_code, namespace)
+                
+                # Find and call the handler
+                handler = namespace.get('handler')
+                if handler and callable(handler):
+                    # 🔥 CRITICAL: Capture the return value!
+                    handler_result = handler(payload or {}, execution_context)
+                    logs.append(f"Handler returned: {type(handler_result).__name__}")
+                else:
+                    error_message = "No 'handler' function found in code"
+                    status = "FAILED"
+                    logs.append(f"ERROR: {error_message}")
+                
+                # Restore stdout and get logs
+                sys.stdout = old_stdout
+                output_logs = captured_output.getvalue()
+                if output_logs:
+                    for line in output_logs.strip().split('\n'):
+                        logs.append(f"[stdout] {line}")
+                        
+            except Exception as e:
+                sys.stdout = old_stdout
+                status = "FAILED"
+                error_message = str(e)
+                logs.append(f"ERROR: {error_message}")
+                logs.append(traceback.format_exc())
+                print(f"❌ Function execution error: {e}")
+        
+        elif function_code and runtime.startswith('nodejs'):
+            # For Node.js, we would spawn a subprocess or use a JS runtime
+            # For now, return a placeholder
+            handler_result = {
+                "message": "Node.js runtime not yet implemented",
+                "code_length": len(function_code)
+            }
+            logs.append("Node.js runtime: stub execution")
+        
+        elif not function_code:
+            # No code provided - return default response
+            handler_result = {
+                "message": "No code deployed for this function",
+                "hint": "Use the code editor to write and deploy your function"
+            }
+            logs.append("WARNING: No code found for this function")
+        
+        # Calculate duration
+        duration_ms = int((time.time() - start_time) * 1000)
+        
+        logs.append(f"END RequestId: {function_id[:8]}")
+        logs.append(f"Duration: {duration_ms}ms")
         
         await self._log_audit("InvokeFunction", "function", function_id)
         
-        # Simulate execution (in real implementation, this would run the code)
-        return {
+        # Build response with REAL handler result
+        response = {
             "function_id": function_id,
-            "status": "SUCCESS",
-            "response": {
-                "message": "Function executed successfully",
-                "input": payload or {},
-                "output": {"result": "Hello from MiniCloud Functions!"}
-            },
-            "duration_ms": 42,
-            "logs": [
-                f"START RequestId: {function_id[:8]}",
-                f"Processing input: {payload}",
-                "END RequestId"
-            ]
+            "function_name": function_name,
+            "status": status,
+            "response": handler_result,  # 🔥 THE ACTUAL HANDLER RETURN VALUE
+            "duration_ms": duration_ms,
+            "logs": logs
         }
+        
+        if error_message:
+            response["error"] = error_message
+        
+        print(f"{'✅' if status == 'SUCCESS' else '❌'} Function {function_name} invoked: {status} ({duration_ms}ms)")
+        
+        return response
 
 
 
