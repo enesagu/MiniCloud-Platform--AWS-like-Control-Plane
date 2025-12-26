@@ -284,11 +284,18 @@ class FunctionService(BaseService):
             "handler": "main.handler"
         }
         
-        if db.is_connected:
-            await self.resource_repo.create(
-                function_id, project_id, 'function', name, spec,
-                state={"status": "ACTIVE", "invocation_count": 0}
-            )
+        try:
+            if db.is_connected:
+                await self.resource_repo.create(
+                    function_id, project_id, 'function', name, spec,
+                    state={"status": "ACTIVE", "invocation_count": 0}
+                )
+                print(f"✅ Function created: {name} (ID: {function_id})")
+            else:
+                print(f"⚠️ Database not connected, function not persisted: {name}")
+        except Exception as e:
+            print(f"❌ Error creating function: {e}")
+            raise
         
         await self._log_audit("CreateFunction", "function", function_id)
         
@@ -301,19 +308,36 @@ class FunctionService(BaseService):
         }
     
     async def list_by_project(self, project_id: str) -> List[Dict]:
-        return await self.resource_repo.list_by_project(project_id, "function")
+        try:
+            if db.is_connected:
+                result = await self.resource_repo.list_by_project(project_id, "function")
+                print(f"📋 Listed {len(result)} functions for project {project_id}")
+                return result
+            else:
+                print(f"⚠️ Database not connected, returning empty list")
+                return []
+        except Exception as e:
+            print(f"❌ Error listing functions: {e}")
+            return []
     
     async def delete(self, project_id: str, function_id: str) -> Dict:
-        if db.is_connected:
-            await self.resource_repo.delete(project_id, function_id)
+        try:
+            if db.is_connected:
+                await self.resource_repo.delete(project_id, function_id)
+                print(f"🗑️ Function deleted: {function_id}")
+        except Exception as e:
+            print(f"❌ Error deleting function: {e}")
         
         await self._log_audit("DeleteFunction", "function", function_id)
         return {"id": function_id, "status": "DELETED"}
     
     async def invoke(self, function_id: str, payload: Dict = None) -> Dict:
         # Update invocation count
-        if db.is_connected:
-            await self.resource_repo.update_state(function_id, "invocation_count")
+        try:
+            if db.is_connected:
+                await self.resource_repo.update_state(function_id, "invocation_count")
+        except Exception as e:
+            print(f"⚠️ Could not update invocation count: {e}")
         
         await self._log_audit("InvokeFunction", "function", function_id)
         
