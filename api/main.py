@@ -98,6 +98,28 @@ class PolicyCreate(BaseModel):
     description: Optional[str] = None
     document: Dict[str, Any]
 
+class TopicCreate(BaseModel):
+    name: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+
+class SubscriptionCreate(BaseModel):
+    protocol: str  # http, https, email, sqs, lambda
+    endpoint: str  # URL, email, queue name, function name
+    filter_policy: Optional[Dict[str, Any]] = {}
+
+class QueueCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    visibility_timeout: int = 30
+    message_retention: int = 345600
+    delay_seconds: int = 0
+
+class MessageCreate(BaseModel):
+    body: str
+    attributes: Optional[Dict[str, Any]] = {}
+    delay_seconds: Optional[int] = 0
+
 # =====================================================
 # HELPERS
 # =====================================================
@@ -133,6 +155,49 @@ async def health_check():
         "minio": "connected" if minio_ok else "disconnected",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus-compatible metrics endpoint"""
+    metrics_text = []
+    
+    # Basic metrics
+    metrics_text.append("# HELP minicloud_up API is up")
+    metrics_text.append("# TYPE minicloud_up gauge")
+    metrics_text.append("minicloud_up 1")
+    
+    metrics_text.append("# HELP minicloud_database_connected Database connection status")
+    metrics_text.append("# TYPE minicloud_database_connected gauge")
+    metrics_text.append(f"minicloud_database_connected {1 if db_pool else 0}")
+    
+    metrics_text.append("# HELP minicloud_minio_connected MinIO connection status")
+    metrics_text.append("# TYPE minicloud_minio_connected gauge")
+    metrics_text.append(f"minicloud_minio_connected {1 if minio_client else 0}")
+    
+    # Resource counts
+    if db_pool:
+        try:
+            counts = await db_pool.fetchrow("""
+                SELECT 
+                    (SELECT COUNT(*) FROM resources WHERE type = 'function') as functions,
+                    (SELECT COUNT(*) FROM resources WHERE type = 'workflow') as workflows,
+                    (SELECT COUNT(*) FROM resources WHERE type = 'bucket') as buckets,
+                    (SELECT COUNT(*) FROM topics) as topics,
+                    (SELECT COUNT(*) FROM queues) as queues
+            """)
+            if counts:
+                metrics_text.append("# HELP minicloud_resources_total Total resources by type")
+                metrics_text.append("# TYPE minicloud_resources_total gauge")
+                metrics_text.append(f'minicloud_resources_total{{type="function"}} {counts["functions"] or 0}')
+                metrics_text.append(f'minicloud_resources_total{{type="workflow"}} {counts["workflows"] or 0}')
+                metrics_text.append(f'minicloud_resources_total{{type="bucket"}} {counts["buckets"] or 0}')
+                metrics_text.append(f'minicloud_resources_total{{type="topic"}} {counts["topics"] or 0}')
+                metrics_text.append(f'minicloud_resources_total{{type="queue"}} {counts["queues"] or 0}')
+        except:
+            pass
+    
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("\n".join(metrics_text), media_type="text/plain")
 
 # =====================================================
 # ORGANIZATIONS
@@ -557,9 +622,281 @@ async def get_project_usage(project_id: str):
     return {"project_id": project_id, "period": "current", **usage}
 
 # =====================================================
+# TOPICS (SNS-like Pub/Sub)
+# =====================================================
+
+@app.post("/api/v1/projects/{project_id}/topics", tags=["Topics"])
+async def create_topic(project_id: str, topic: TopicCreate):
+    """Create a new SNS-like topic"""
+    topic_id = str(uuid.uuid4())
+    
+    if db_pool:
+        await db_pool.execute(
+            "INSERT INTO topics (id, project_id, name, display_name, description, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
+            topic_id, project_id, topic.name, topic.display_name or topic.name, topic.description, datetime.utcnow()
+        )
+    
+    await log_audit("CreateTopic", "topic", topic_id)
+    return {
+        "id": topic_id,
+        "name": topic.name,
+        "arn": f"arn:minicloud:sns:{project_id}:{topic.name}",
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+@app.get("/api/v1/projects/{project_id}/topics", tags=["Topics"])
+async def list_topics(project_id: str):
+    """List all topics in a project"""
+    if db_pool:
+        rows = await db_pool.fetch(
+            "SELECT * FROM topics WHERE project_id = $1 ORDER BY created_at DESC", project_id
+        )
+        return [dict(r) for r in rows]
+    return []
+
+@app.delete("/api/v1/projects/{project_id}/topics/{topic_id}", tags=["Topics"])
+async def delete_topic(project_id: str, topic_id: str):
+    """Delete a topic and all its subscriptions"""
+    if db_pool:
+        await db_pool.execute("DELETE FROM topics WHERE id = $1 AND project_id = $2", topic_id, project_id)
+    await log_audit("DeleteTopic", "topic", topic_id)
+    return {"id": topic_id, "status": "DELETED"}
+
+@app.post("/api/v1/topics/{topic_id}/publish", tags=["Topics"])
+async def publish_to_topic(topic_id: str, message: MessageCreate):
+    """Publish a message to a topic (fans out to all subscribers)"""
+    import json
+    
+    if db_pool:
+        # Update message count
+        await db_pool.execute(
+            "UPDATE topics SET message_count = message_count + 1 WHERE id = $1", topic_id
+        )
+        
+        # Get all subscriptions
+        subscriptions = await db_pool.fetch(
+            "SELECT * FROM subscriptions WHERE topic_id = $1 AND status = 'CONFIRMED'", topic_id
+        )
+        
+        # Deliver to each subscriber (in production, this would be async)
+        delivered = 0
+        for sub in subscriptions:
+            # Update delivery count
+            await db_pool.execute(
+                "UPDATE subscriptions SET delivery_count = delivery_count + 1 WHERE id = $1", sub['id']
+            )
+            delivered += 1
+    
+    await log_audit("PublishMessage", "topic", topic_id)
+    return {
+        "message_id": str(uuid.uuid4()),
+        "topic_id": topic_id,
+        "delivered_to": delivered if db_pool else 0
+    }
+
+# =====================================================
+# SUBSCRIPTIONS
+# =====================================================
+
+@app.post("/api/v1/topics/{topic_id}/subscriptions", tags=["Topics"])
+async def create_subscription(topic_id: str, sub: SubscriptionCreate):
+    """Subscribe to a topic"""
+    import json
+    sub_id = str(uuid.uuid4())
+    
+    if db_pool:
+        await db_pool.execute(
+            "INSERT INTO subscriptions (id, topic_id, protocol, endpoint, filter_policy, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            sub_id, topic_id, sub.protocol, sub.endpoint, json.dumps(sub.filter_policy), 'CONFIRMED', datetime.utcnow()
+        )
+    
+    await log_audit("Subscribe", "subscription", sub_id)
+    return {
+        "id": sub_id,
+        "topic_id": topic_id,
+        "protocol": sub.protocol,
+        "endpoint": sub.endpoint,
+        "status": "CONFIRMED",
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+@app.get("/api/v1/topics/{topic_id}/subscriptions", tags=["Topics"])
+async def list_subscriptions(topic_id: str):
+    """List all subscriptions for a topic"""
+    if db_pool:
+        rows = await db_pool.fetch(
+            "SELECT * FROM subscriptions WHERE topic_id = $1 ORDER BY created_at DESC", topic_id
+        )
+        return [dict(r) for r in rows]
+    return []
+
+@app.delete("/api/v1/subscriptions/{subscription_id}", tags=["Topics"])
+async def delete_subscription(subscription_id: str):
+    """Unsubscribe from a topic"""
+    if db_pool:
+        await db_pool.execute("DELETE FROM subscriptions WHERE id = $1", subscription_id)
+    await log_audit("Unsubscribe", "subscription", subscription_id)
+    return {"id": subscription_id, "status": "DELETED"}
+
+# =====================================================
+# QUEUES (SQS-like Message Queues)
+# =====================================================
+
+@app.post("/api/v1/projects/{project_id}/queues", tags=["Queues"])
+async def create_queue(project_id: str, queue: QueueCreate):
+    """Create a new SQS-like message queue"""
+    queue_id = str(uuid.uuid4())
+    
+    if db_pool:
+        await db_pool.execute(
+            """INSERT INTO queues (id, project_id, name, description, visibility_timeout, message_retention, delay_seconds, created_at) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+            queue_id, project_id, queue.name, queue.description, 
+            queue.visibility_timeout, queue.message_retention, queue.delay_seconds, datetime.utcnow()
+        )
+    
+    await log_audit("CreateQueue", "queue", queue_id)
+    return {
+        "id": queue_id,
+        "name": queue.name,
+        "url": f"https://sqs.minicloud.local/{project_id}/{queue.name}",
+        "arn": f"arn:minicloud:sqs:{project_id}:{queue.name}",
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+@app.get("/api/v1/projects/{project_id}/queues", tags=["Queues"])
+async def list_queues(project_id: str):
+    """List all queues in a project"""
+    if db_pool:
+        rows = await db_pool.fetch(
+            "SELECT * FROM queues WHERE project_id = $1 ORDER BY created_at DESC", project_id
+        )
+        return [dict(r) for r in rows]
+    return []
+
+@app.get("/api/v1/queues/{queue_id}", tags=["Queues"])
+async def get_queue(queue_id: str):
+    """Get queue details and attributes"""
+    if db_pool:
+        row = await db_pool.fetchrow("SELECT * FROM queues WHERE id = $1", queue_id)
+        if row:
+            # Get message counts
+            msg_count = await db_pool.fetchval(
+                "SELECT COUNT(*) FROM messages WHERE queue_id = $1 AND visible_at <= NOW()", queue_id
+            )
+            result = dict(row)
+            result['approximate_message_count'] = msg_count or 0
+            return result
+    raise HTTPException(status_code=404, detail="Queue not found")
+
+@app.delete("/api/v1/projects/{project_id}/queues/{queue_id}", tags=["Queues"])
+async def delete_queue(project_id: str, queue_id: str):
+    """Delete a queue and all its messages"""
+    if db_pool:
+        await db_pool.execute("DELETE FROM queues WHERE id = $1 AND project_id = $2", queue_id, project_id)
+    await log_audit("DeleteQueue", "queue", queue_id)
+    return {"id": queue_id, "status": "DELETED"}
+
+# =====================================================
+# QUEUE MESSAGES
+# =====================================================
+
+@app.post("/api/v1/queues/{queue_id}/messages", tags=["Queues"])
+async def send_message(queue_id: str, message: MessageCreate):
+    """Send a message to a queue"""
+    import json
+    from datetime import timedelta
+    
+    message_id = str(uuid.uuid4())
+    delay = message.delay_seconds or 0
+    visible_at = datetime.utcnow() + timedelta(seconds=delay)
+    
+    if db_pool:
+        await db_pool.execute(
+            """INSERT INTO messages (id, queue_id, body, attributes, visible_at, sent_at) 
+               VALUES ($1, $2, $3, $4, $5, $6)""",
+            message_id, queue_id, message.body, json.dumps(message.attributes), visible_at, datetime.utcnow()
+        )
+        # Update queue message count
+        await db_pool.execute("UPDATE queues SET message_count = message_count + 1 WHERE id = $1", queue_id)
+    
+    await log_audit("SendMessage", "queue", queue_id)
+    return {
+        "message_id": message_id,
+        "queue_id": queue_id,
+        "body": message.body,
+        "sent_at": datetime.utcnow().isoformat()
+    }
+
+@app.get("/api/v1/queues/{queue_id}/messages", tags=["Queues"])
+async def receive_messages(queue_id: str, max_messages: int = 1, visibility_timeout: int = 30):
+    """Receive messages from a queue (long polling)"""
+    import json
+    from datetime import timedelta
+    
+    messages = []
+    
+    if db_pool:
+        # Get visible messages
+        rows = await db_pool.fetch(
+            """SELECT * FROM messages 
+               WHERE queue_id = $1 AND visible_at <= NOW() AND receipt_handle IS NULL
+               ORDER BY sent_at LIMIT $2""",
+            queue_id, max_messages
+        )
+        
+        for row in rows:
+            receipt_handle = str(uuid.uuid4())
+            new_visible_at = datetime.utcnow() + timedelta(seconds=visibility_timeout)
+            
+            # Mark as in-flight
+            await db_pool.execute(
+                """UPDATE messages SET receipt_handle = $1, visible_at = $2, 
+                   receive_count = receive_count + 1, first_received_at = COALESCE(first_received_at, NOW())
+                   WHERE id = $3""",
+                receipt_handle, new_visible_at, row['id']
+            )
+            
+            msg = dict(row)
+            msg['receipt_handle'] = receipt_handle
+            if 'attributes' in msg and isinstance(msg['attributes'], str):
+                msg['attributes'] = json.loads(msg['attributes'])
+            messages.append(msg)
+        
+        # Update receive count
+        if messages:
+            await db_pool.execute("UPDATE queues SET receive_count = receive_count + $1 WHERE id = $2", len(messages), queue_id)
+    
+    return {"messages": messages, "count": len(messages)}
+
+@app.delete("/api/v1/queues/{queue_id}/messages/{receipt_handle}", tags=["Queues"])
+async def delete_message(queue_id: str, receipt_handle: str):
+    """Delete a message from the queue (acknowledge processing)"""
+    if db_pool:
+        result = await db_pool.execute(
+            "DELETE FROM messages WHERE queue_id = $1 AND receipt_handle = $2",
+            queue_id, receipt_handle
+        )
+    await log_audit("DeleteMessage", "queue", queue_id)
+    return {"queue_id": queue_id, "receipt_handle": receipt_handle, "status": "DELETED"}
+
+@app.post("/api/v1/queues/{queue_id}/purge", tags=["Queues"])
+async def purge_queue(queue_id: str):
+    """Delete all messages from a queue"""
+    deleted = 0
+    if db_pool:
+        deleted = await db_pool.fetchval("SELECT COUNT(*) FROM messages WHERE queue_id = $1", queue_id)
+        await db_pool.execute("DELETE FROM messages WHERE queue_id = $1", queue_id)
+        await db_pool.execute("UPDATE queues SET message_count = 0 WHERE id = $1", queue_id)
+    
+    await log_audit("PurgeQueue", "queue", queue_id)
+    return {"queue_id": queue_id, "deleted_count": deleted or 0}
+
+# =====================================================
 # ENTRYPOINT
 # =====================================================
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

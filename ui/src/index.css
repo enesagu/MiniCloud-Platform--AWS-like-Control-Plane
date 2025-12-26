@@ -421,6 +421,14 @@ tr.clickable { cursor: pointer; }
 .resource-icon.function { background: var(--color-purple-muted); color: var(--color-purple); }
 .resource-icon.workflow { background: var(--color-success-muted); color: var(--color-success); }
 .resource-icon.topic, .resource-icon.event_rule { background: var(--color-warning-muted); color: var(--color-warning); }
+.resource-icon.queue { background: var(--color-accent-muted); color: var(--color-accent); }
+
+.message-body {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ========================================
    Status Badges

@@ -1,13 +1,17 @@
 -- =====================================================
 -- MiniCloud Platform - PostgreSQL Schema
 -- AWS-like Resource Registry + IAM + Audit
--- Compatible with backend API
+-- All IDs are TEXT (not UUID) for simpler usage
 -- =====================================================
 
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Drop existing tables if any (for clean start)
+DROP TABLE IF EXISTS messages CASCADE;
+DROP TABLE IF EXISTS queues CASCADE;
+DROP TABLE IF EXISTS subscriptions CASCADE;
+DROP TABLE IF EXISTS topics CASCADE;
 DROP TABLE IF EXISTS role_policies CASCADE;
 DROP TABLE IF EXISTS role_bindings CASCADE;
 DROP TABLE IF EXISTS api_keys CASCADE;
@@ -25,9 +29,9 @@ DROP TABLE IF EXISTS organizations CASCADE;
 
 -- 1. ORGANIZATIONS
 CREATE TABLE organizations (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    display_name VARCHAR(255),
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    display_name TEXT,
     settings JSONB DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -35,11 +39,11 @@ CREATE TABLE organizations (
 
 -- 2. PROJECTS
 CREATE TABLE projects (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    org_id VARCHAR(255) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    display_name VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'ACTIVE',
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    display_name TEXT,
+    status TEXT DEFAULT 'ACTIVE',
     settings JSONB DEFAULT '{}',
     quota JSONB DEFAULT '{"buckets": 10, "functions": 50, "workflows": 100}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -49,12 +53,12 @@ CREATE TABLE projects (
 
 -- 3. USERS
 CREATE TABLE users (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    org_id VARCHAR(255) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    username VARCHAR(100) NOT NULL,
-    email VARCHAR(255),
-    password_hash VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'ACTIVE',
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    email TEXT,
+    password_hash TEXT,
+    status TEXT DEFAULT 'ACTIVE',
     mfa_enabled BOOLEAN DEFAULT FALSE,
     last_login TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -64,9 +68,9 @@ CREATE TABLE users (
 
 -- 4. ROLES
 CREATE TABLE roles (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    org_id VARCHAR(255) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    name TEXT NOT NULL,
     description TEXT,
     is_system BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -75,9 +79,9 @@ CREATE TABLE roles (
 
 -- 5. POLICIES
 CREATE TABLE policies (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    org_id VARCHAR(255) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    name TEXT NOT NULL,
     description TEXT,
     version INT DEFAULT 1,
     document JSONB NOT NULL,
@@ -88,34 +92,34 @@ CREATE TABLE policies (
 
 -- 6. ROLE_BINDINGS
 CREATE TABLE role_bindings (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    user_id VARCHAR(255) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role_id VARCHAR(255) NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    project_id VARCHAR(255) REFERENCES projects(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL,
+    role_id TEXT NOT NULL,
+    project_id TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(user_id, role_id, project_id)
 );
 
 -- 7. ROLE_POLICIES
 CREATE TABLE role_policies (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    role_id VARCHAR(255) NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    policy_id VARCHAR(255) NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    role_id TEXT NOT NULL,
+    policy_id TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(role_id, policy_id)
 );
 
 -- 8. RESOURCES (All platform resources)
 CREATE TABLE resources (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    project_id VARCHAR(255) NOT NULL,
-    type VARCHAR(50) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    status VARCHAR(50) DEFAULT 'ACTIVE',
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT DEFAULT 'ACTIVE',
     spec JSONB DEFAULT '{}',
     state JSONB DEFAULT '{}',
     tags JSONB DEFAULT '{}',
-    created_by VARCHAR(255),
+    created_by TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(project_id, type, name)
@@ -123,9 +127,9 @@ CREATE TABLE resources (
 
 -- 9. EVENT_RULES
 CREATE TABLE event_rules (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    project_id VARCHAR(255) NOT NULL,
-    name VARCHAR(100) NOT NULL,
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
     description TEXT,
     event_pattern JSONB NOT NULL,
     targets JSONB NOT NULL,
@@ -137,16 +141,16 @@ CREATE TABLE event_rules (
 
 -- 10. AUDIT_LOGS
 CREATE TABLE audit_logs (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    org_id VARCHAR(255) NOT NULL,
-    project_id VARCHAR(255),
-    actor_id VARCHAR(255),
-    action VARCHAR(100) NOT NULL,
-    resource_type VARCHAR(50),
-    resource_id VARCHAR(255),
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    org_id TEXT NOT NULL,
+    project_id TEXT,
+    actor_id TEXT,
+    action TEXT NOT NULL,
+    resource_type TEXT,
+    resource_id TEXT,
     details TEXT,
-    ip_address VARCHAR(50),
-    status VARCHAR(50) DEFAULT 'success',
+    ip_address TEXT,
+    status TEXT DEFAULT 'success',
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -156,11 +160,11 @@ CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 
 -- 11. WORKFLOW_RUNS
 CREATE TABLE workflow_runs (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    workflow_id VARCHAR(255),
-    workflow_name VARCHAR(100),
-    run_id VARCHAR(255),
-    status VARCHAR(50) NOT NULL DEFAULT 'RUNNING',
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    workflow_id TEXT,
+    workflow_name TEXT,
+    run_id TEXT,
+    status TEXT NOT NULL DEFAULT 'RUNNING',
     input JSONB,
     output JSONB,
     error_message TEXT,
@@ -172,11 +176,11 @@ CREATE INDEX idx_workflow_runs_workflow ON workflow_runs(workflow_id, started_at
 
 -- 12. METERING_USAGE
 CREATE TABLE metering_usage (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    project_id VARCHAR(255) NOT NULL,
-    resource_type VARCHAR(50) NOT NULL,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    project_id TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
     usage_value DECIMAL(20, 4) NOT NULL,
-    usage_unit VARCHAR(20) NOT NULL,
+    usage_unit TEXT NOT NULL,
     period_start TIMESTAMP WITH TIME ZONE NOT NULL,
     period_end TIMESTAMP WITH TIME ZONE NOT NULL,
     recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -184,15 +188,77 @@ CREATE TABLE metering_usage (
 
 -- 13. API_KEYS
 CREATE TABLE api_keys (
-    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    user_id VARCHAR(255) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    key_hash VARCHAR(255) NOT NULL,
-    key_prefix VARCHAR(10) NOT NULL,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    key_hash TEXT NOT NULL,
+    key_prefix TEXT NOT NULL,
     last_used_at TIMESTAMP WITH TIME ZONE,
     expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- =====================================================
+-- MESSAGING (SNS/SQS equivalent)
+-- =====================================================
+
+-- 14. TOPICS (SNS-like pub/sub)
+CREATE TABLE topics (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    display_name TEXT,
+    description TEXT,
+    message_count BIGINT DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(project_id, name)
+);
+
+-- 15. SUBSCRIPTIONS (Topic subscribers)
+CREATE TABLE subscriptions (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    topic_id TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    status TEXT DEFAULT 'PENDING',
+    filter_policy JSONB DEFAULT '{}',
+    delivery_count BIGINT DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_subscriptions_topic ON subscriptions(topic_id);
+
+-- 16. QUEUES (SQS-like message queues)
+CREATE TABLE queues (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    visibility_timeout INT DEFAULT 30,
+    message_retention INT DEFAULT 345600,
+    max_message_size INT DEFAULT 262144,
+    delay_seconds INT DEFAULT 0,
+    receive_count BIGINT DEFAULT 0,
+    message_count BIGINT DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(project_id, name)
+);
+
+-- 17. MESSAGES (Queue messages)
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    queue_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    attributes JSONB DEFAULT '{}',
+    message_group_id TEXT,
+    receipt_handle TEXT,
+    visible_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    sent_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    receive_count INT DEFAULT 0,
+    first_received_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_messages_queue ON messages(queue_id, visible_at);
 
 -- =====================================================
 -- SEED DATA

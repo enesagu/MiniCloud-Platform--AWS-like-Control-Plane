@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
-import { BarChart3, Code, Folder, GitBranch, Zap, Shield, Terminal, FileText } from 'lucide-react'
+import { BarChart3, Code, Folder, GitBranch, Zap, Shield, Terminal, Bell, Inbox } from 'lucide-react'
 import { Sidebar, Header } from './components/Layout'
-import { DashboardPage, BucketsPage, FunctionsPage, WorkflowsPage, EventRulesPage, IAMPage, AuditLogsPage } from './pages'
+import { DashboardPage, BucketsPage, FunctionsPage, WorkflowsPage, EventRulesPage, TopicsPage, QueuesPage, IAMPage, AuditLogsPage } from './pages'
 
 // Navigation configuration
 const NAV_ITEMS = [
@@ -22,6 +22,13 @@ const NAV_ITEMS = [
     section: 'Storage', 
     items: [
       { id: 'buckets', label: 'Buckets', icon: Folder },
+    ]
+  },
+  { 
+    section: 'Messaging', 
+    items: [
+      { id: 'topics', label: 'Topics (SNS)', icon: Bell },
+      { id: 'queues', label: 'Queues (SQS)', icon: Inbox },
     ]
   },
   { 
@@ -50,6 +57,8 @@ const PAGE_TITLES = {
   functions: { title: 'Functions', subtitle: 'Serverless compute' },
   workflows: { title: 'Workflows', subtitle: 'Durable workflow orchestration' },
   buckets: { title: 'Buckets', subtitle: 'Object storage' },
+  topics: { title: 'Topics (SNS)', subtitle: 'Pub/Sub messaging' },
+  queues: { title: 'Queues (SQS)', subtitle: 'Message queues' },
   events: { title: 'Event Rules', subtitle: 'Event routing' },
   iam: { title: 'IAM', subtitle: 'Identity & Access Management' },
   logs: { title: 'Audit Logs', subtitle: 'Activity trail' },
@@ -61,6 +70,8 @@ const PAGES = {
   buckets: BucketsPage,
   functions: FunctionsPage,
   workflows: WorkflowsPage,
+  topics: TopicsPage,
+  queues: QueuesPage,
   events: EventRulesPage,
   iam: IAMPage,
   logs: AuditLogsPage,

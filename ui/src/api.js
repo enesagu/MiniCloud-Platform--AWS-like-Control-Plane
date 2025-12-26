@@ -89,6 +89,29 @@ class ApiService {
 
   // Usage/Metrics
   getUsage = (projectId = this.defaultProjectId) => this.get(`/api/v1/projects/${projectId}/usage`)
+
+  // Topics (SNS-like)
+  getTopics = (projectId = this.defaultProjectId) => this.get(`/api/v1/projects/${projectId}/topics`)
+  createTopic = (projectId, data) => this.post(`/api/v1/projects/${projectId}/topics`, data)
+  deleteTopic = (projectId, topicId) => this.delete(`/api/v1/projects/${projectId}/topics/${topicId}`)
+  publishToTopic = (topicId, message) => this.post(`/api/v1/topics/${topicId}/publish`, message)
+  
+  // Subscriptions
+  getSubscriptions = (topicId) => this.get(`/api/v1/topics/${topicId}/subscriptions`)
+  createSubscription = (topicId, data) => this.post(`/api/v1/topics/${topicId}/subscriptions`, data)
+  deleteSubscription = (subscriptionId) => this.delete(`/api/v1/subscriptions/${subscriptionId}`)
+
+  // Queues (SQS-like)
+  getQueues = (projectId = this.defaultProjectId) => this.get(`/api/v1/projects/${projectId}/queues`)
+  createQueue = (projectId, data) => this.post(`/api/v1/projects/${projectId}/queues`, data)
+  getQueue = (queueId) => this.get(`/api/v1/queues/${queueId}`)
+  deleteQueue = (projectId, queueId) => this.delete(`/api/v1/projects/${projectId}/queues/${queueId}`)
+  purgeQueue = (queueId) => this.post(`/api/v1/queues/${queueId}/purge`, {})
+  
+  // Queue Messages
+  sendMessage = (queueId, message) => this.post(`/api/v1/queues/${queueId}/messages`, message)
+  receiveMessages = (queueId, maxMessages = 10) => this.get(`/api/v1/queues/${queueId}/messages?max_messages=${maxMessages}`)
+  deleteMessage = (queueId, receiptHandle) => this.delete(`/api/v1/queues/${queueId}/messages/${receiptHandle}`)
 }
 
 export const api = new ApiService()
