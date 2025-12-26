@@ -64,12 +64,17 @@ minicloud-platform/
 │   └── main.py             # Workflow & Activity definitions
 ├── database/               # Database schemas
 │   └── schema.sql          # PostgreSQL schema (14 tables)
+├── ui/                     # React Dashboard (MiniCloud Console)
+│   ├── src/App.jsx         # Main application component
+│   ├── src/index.css       # Design system (AWS-inspired dark theme)
+│   └── package.json        # Frontend dependencies
 ├── observability/          # Monitoring configuration
 │   └── prometheus.yml      # Prometheus scrape config
-├── docker-compose.yml      # Full platform orchestration
+├── docker-compose.yml      # Full platform orchestration (13 services)
 ├── Dockerfile.api          # API service container
 ├── Dockerfile.worker       # Worker service container
 ├── Dockerfile.router       # Event router container
+├── Dockerfile.ui           # React UI container (nginx)
 └── requirements.txt        # Python dependencies
 ```
 
@@ -95,6 +100,7 @@ docker-compose up --build
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
+| **MiniCloud Console** | http://localhost:3000 | - |
 | **API (Swagger)** | http://localhost:8000/docs | - |
 | **MinIO Console** | http://localhost:9001 | minioadmin / minioadmin |
 | **Temporal UI** | http://localhost:8080 | - |
@@ -274,7 +280,7 @@ This repository showcases:
 
 ## 🔮 Future Enhancements
 
-- [ ] React UI Dashboard
+- [x] React UI Dashboard ✅
 - [ ] Kubernetes operator for resource provisioning
 - [ ] OpenTelemetry distributed tracing
 - [ ] Rate limiting and quotas

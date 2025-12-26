@@ -241,6 +241,23 @@ services:
       - ./core:/app/core
     command: python core/event_router.py
 
+  # =====================================================
+  # UI (MiniCloud Console)
+  # =====================================================
+  
+  # 13. React UI Dashboard
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: minicloud_ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    environment:
+      - VITE_API_URL=http://localhost:8000
+
 volumes:
   postgres_data:
   minio_data:
