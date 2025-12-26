@@ -1,5 +1,5 @@
-// API Service - connects to FastAPI backend
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// API Service - connects to FastAPI backend via nginx proxy
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 class ApiService {
   constructor() {
