@@ -158,11 +158,22 @@ class EventRouter:
         self.dispatcher = TargetDispatcher()
         self.rules: List[EventRule] = []
     
-    async def connect(self):
-        """Connect to NATS server."""
-        logger.info(f"Connecting to NATS at {NATS_URL}")
-        self.nc = await nats.connect(NATS_URL)
-        logger.info("Connected to NATS successfully")
+    async def connect(self, max_retries: int = 30, retry_delay: float = 2.0):
+        """Connect to NATS server with retry logic."""
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Connecting to NATS at {NATS_URL} (attempt {attempt + 1}/{max_retries})")
+                self.nc = await nats.connect(NATS_URL)
+                logger.info("Connected to NATS successfully")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to connect to NATS: {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error("Max retries reached. Could not connect to NATS.")
+                    raise
     
     async def load_rules(self):
         """Load event rules from database."""
@@ -262,6 +273,13 @@ class EventRouter:
 
 async def main():
     """Entry point."""
+    # Wait for Docker DNS and NATS to be ready
+    startup_delay = int(os.getenv("STARTUP_DELAY", "10"))
+    logger.info(f"Starting Event Router...")
+    logger.info(f"NATS_URL = {NATS_URL}")
+    logger.info(f"Waiting {startup_delay} seconds for services to be ready...")
+    await asyncio.sleep(startup_delay)
+    
     router = EventRouter()
     
     try:

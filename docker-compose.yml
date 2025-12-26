@@ -46,6 +46,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
+      - ./database/00_create_databases.sql:/docker-entrypoint-initdb.d/00_create_databases.sql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -93,6 +94,12 @@ services:
       - "--store_dir=/data"
     volumes:
       - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   # =====================================================
   # DATA PLANE - Workflow Orchestration
@@ -230,16 +237,19 @@ services:
       dockerfile: Dockerfile.router
     container_name: minicloud_event_router
     depends_on:
-      - nats
-      - temporal
-      - db
+      nats:
+        condition: service_healthy
+      db:
+        condition: service_healthy
     environment:
       - NATS_URL=nats://nats:4222
       - TEMPORAL_HOST=temporal:7233
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/minicloud
+      - STARTUP_DELAY=15
     volumes:
       - ./core:/app/core
     command: python core/event_router.py
+    restart: unless-stopped
 
   # =====================================================
   # UI (MiniCloud Console)

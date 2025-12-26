@@ -10,7 +10,9 @@ import {
 // ========================================
 // API Service
 // ========================================
-const API_BASE = '/api/v1'
+// In Docker: UI runs on port 3000, API on port 8000
+// Use environment variable or default to localhost:8000 for API calls
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
 const api = {
   async get(endpoint) {
