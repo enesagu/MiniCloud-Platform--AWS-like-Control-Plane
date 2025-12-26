@@ -31,6 +31,13 @@ services:
       - ./api:/app/api
       - ./core:/app/core
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
 
   # =====================================================
   # DATA PLANE - Storage
@@ -266,9 +273,11 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=
+    restart: unless-stopped
 
 volumes:
   postgres_data:

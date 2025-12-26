@@ -53,9 +53,12 @@ class ApiService {
   // Functions
   getFunctions = (projectId = this.defaultProjectId) => this.get(`/api/v1/projects/${projectId}/functions`)
   createFunction = (projectId, data) => 
-    this.post(`/api/v1/projects/${projectId}/functions?name=${data.name}&runtime=${data.runtime}&memory_mb=${data.memory}&timeout_seconds=${data.timeout}`, {})
+    this.post(`/api/v1/projects/${projectId}/functions?name=${data.name}&runtime=${data.runtime}&memory_mb=${data.memory}&timeout_seconds=${data.timeout}`, { code: data.code })
   deleteFunction = (projectId, functionId) => this.delete(`/api/v1/projects/${projectId}/functions/${functionId}`)
   invokeFunction = (functionId, payload = {}) => this.post(`/api/v1/functions/${functionId}/invoke`, payload)
+  updateFunctionCode = (functionId, code) => this.put(`/api/v1/functions/${functionId}/code`, { code })
+  getFunction = (projectId, functionId) => this.get(`/api/v1/projects/${projectId}/functions/${functionId}`)
+
 
   // Workflows
   getWorkflows = (projectId = this.defaultProjectId) => this.get(`/api/v1/projects/${projectId}/workflows`)

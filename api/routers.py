@@ -235,10 +235,12 @@ async def create_function(
     name: str = Query(...),
     runtime: str = Query("python3.10"),
     memory_mb: int = Query(128),
-    timeout_seconds: int = Query(30)
+    timeout_seconds: int = Query(30),
+    body: Dict[str, Any] = None
 ):
     service = ServiceFactory.get_function_service()
-    return await service.create(project_id, name, runtime, memory_mb, timeout_seconds)
+    code = body.get("code", "") if body else ""
+    return await service.create(project_id, name, runtime, memory_mb, timeout_seconds, code)
 
 
 @function_router.get("/projects/{project_id}/functions")
@@ -247,10 +249,24 @@ async def list_functions(project_id: str):
     return await service.list_by_project(project_id)
 
 
+@function_router.get("/projects/{project_id}/functions/{function_id}")
+async def get_function(project_id: str, function_id: str):
+    service = ServiceFactory.get_function_service()
+    return await service.get(project_id, function_id)
+
+
 @function_router.delete("/projects/{project_id}/functions/{function_id}")
 async def delete_function(project_id: str, function_id: str):
     service = ServiceFactory.get_function_service()
     return await service.delete(project_id, function_id)
+
+
+@function_router.put("/functions/{function_id}/code")
+async def update_function_code(function_id: str, body: Dict[str, Any]):
+    """Update function code"""
+    service = ServiceFactory.get_function_service()
+    code = body.get("code", "")
+    return await service.update_code(function_id, code)
 
 
 @function_router.post("/functions/{function_id}/invoke")
