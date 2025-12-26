@@ -812,6 +812,283 @@ class MetricsService(BaseService):
         return counts
 
 
+# =====================================================
+# INSTANCE SERVICE (EC2-like Compute)
+# =====================================================
+
+class InstanceService(BaseService):
+    """
+    Business logic for compute instances (EC2 equivalent)
+    Integrates with Temporal for lifecycle orchestration
+    """
+    
+    async def create(self, project_id: str, spec: Dict) -> Dict:
+        """Create a new instance - triggers Temporal workflow"""
+        instance_id = str(uuid.uuid4())
+        name = spec.get("name", f"instance-{instance_id[:8]}")
+        
+        try:
+            if db.is_connected:
+                # Insert instance record
+                await db.execute(
+                    """INSERT INTO instances 
+                       (id, project_id, name, display_name, cpu, memory_mb, disk_gb, 
+                        image, network_segment, zone, startup_script, tags, state)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'REQUESTED')""",
+                    instance_id, project_id, name, spec.get("display_name", name),
+                    spec.get("cpu", 2), spec.get("memory_mb", 2048), spec.get("disk_gb", 20),
+                    spec.get("image", "ubuntu:22.04"), spec.get("network_segment", "default"),
+                    spec.get("zone"), spec.get("startup_script", ""),
+                    json.dumps(spec.get("tags", {}))
+                )
+                
+                # Log event
+                await db.execute(
+                    """INSERT INTO instance_events (instance_id, to_state, message)
+                       VALUES ($1, 'REQUESTED', 'Instance creation requested')""",
+                    instance_id
+                )
+                
+                print(f"✅ Instance created: {name} (ID: {instance_id})")
+                
+                # In production: Start Temporal workflow
+                # client = await Client.connect(TEMPORAL_HOST)
+                # await client.start_workflow(
+                #     "ProvisionInstanceWorkflow",
+                #     {"instance_id": instance_id, **spec},
+                #     id=f"provision-{instance_id}",
+                #     task_queue="minicloud-instance-tasks"
+                # )
+                
+        except Exception as e:
+            print(f"❌ Error creating instance: {e}")
+            raise
+        
+        await self._log_audit("CreateInstance", "instance", instance_id)
+        
+        return {
+            "id": instance_id,
+            "name": name,
+            "project_id": project_id,
+            "state": "REQUESTED",
+            "message": "Instance provisioning workflow started",
+            "created_at": datetime.utcnow().isoformat()
+        }
+    
+    async def list_by_project(self, project_id: str, state: str = None) -> List[Dict]:
+        """List instances in a project"""
+        try:
+            if db.is_connected:
+                query = """SELECT id, name, display_name, cpu, memory_mb, disk_gb, image,
+                                  state, ip_address, dns_name, host_id, zone, tags, created_at
+                           FROM instances WHERE project_id = $1"""
+                params = [project_id]
+                
+                if state:
+                    query += " AND state = $2"
+                    params.append(state)
+                
+                query += " ORDER BY created_at DESC"
+                
+                rows = await db.fetch(query, *params)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"❌ Error listing instances: {e}")
+        
+        return []
+    
+    async def list_by_host(self, host_id: str) -> List[Dict]:
+        """List instances on a specific host"""
+        try:
+            if db.is_connected:
+                rows = await db.fetch(
+                    """SELECT id, name, cpu, memory_mb, state, ip_address, created_at
+                       FROM instances WHERE host_id = $1 ORDER BY created_at DESC""",
+                    host_id
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"❌ Error listing host instances: {e}")
+        
+        return []
+    
+    async def get(self, instance_id: str) -> Optional[Dict]:
+        """Get instance details"""
+        try:
+            if db.is_connected:
+                row = await db.fetchrow(
+                    """SELECT i.*, h.name as host_name 
+                       FROM instances i 
+                       LEFT JOIN hosts h ON i.host_id = h.id 
+                       WHERE i.id = $1""",
+                    instance_id
+                )
+                if row:
+                    return dict(row)
+        except Exception as e:
+            print(f"❌ Error getting instance: {e}")
+        
+        return None
+    
+    async def _change_state(self, instance_id: str, new_state: str, message: str = None) -> Dict:
+        """Helper to change instance state"""
+        try:
+            if db.is_connected:
+                # Get current state
+                current = await db.fetchval(
+                    "SELECT state FROM instances WHERE id = $1", instance_id
+                )
+                
+                # Update state
+                await db.execute(
+                    "UPDATE instances SET state = $1, state_message = $2, updated_at = NOW() WHERE id = $3",
+                    new_state, message, instance_id
+                )
+                
+                # Log event
+                await db.execute(
+                    """INSERT INTO instance_events (instance_id, from_state, to_state, message)
+                       VALUES ($1, $2, $3, $4)""",
+                    instance_id, current, new_state, message
+                )
+                
+                return {
+                    "id": instance_id,
+                    "previous_state": current,
+                    "state": new_state,
+                    "message": message
+                }
+        except Exception as e:
+            print(f"❌ Error changing state: {e}")
+            raise
+    
+    async def stop(self, instance_id: str) -> Dict:
+        """Stop an instance"""
+        result = await self._change_state(instance_id, "STOPPING", "Stop requested")
+        await self._log_audit("StopInstance", "instance", instance_id)
+        
+        # Simulate stop (in prod: trigger workflow)
+        await self._change_state(instance_id, "STOPPED", "Instance stopped")
+        
+        return {**result, "state": "STOPPED"}
+    
+    async def start(self, instance_id: str) -> Dict:
+        """Start a stopped instance"""
+        result = await self._change_state(instance_id, "STARTING", "Start requested")
+        await self._log_audit("StartInstance", "instance", instance_id)
+        
+        # Simulate start
+        await self._change_state(instance_id, "RUNNING", "Instance running")
+        
+        return {**result, "state": "RUNNING"}
+    
+    async def terminate(self, instance_id: str, force: bool = False) -> Dict:
+        """Terminate an instance"""
+        result = await self._change_state(
+            instance_id, 
+            "TERMINATING", 
+            f"Termination requested (force={force})"
+        )
+        await self._log_audit("TerminateInstance", "instance", instance_id)
+        
+        # Update timestamps
+        if db.is_connected:
+            await db.execute(
+                "UPDATE instances SET terminated_at = NOW() WHERE id = $1",
+                instance_id
+            )
+        
+        await self._change_state(instance_id, "TERMINATED", "Instance terminated")
+        
+        return {**result, "state": "TERMINATED"}
+    
+    async def reboot(self, instance_id: str) -> Dict:
+        """Reboot an instance"""
+        await self._change_state(instance_id, "REBOOTING", "Reboot requested")
+        await self._log_audit("RebootInstance", "instance", instance_id)
+        
+        # Simulate reboot
+        await self._change_state(instance_id, "RUNNING", "Instance rebooted")
+        
+        return {"id": instance_id, "state": "RUNNING", "message": "Reboot complete"}
+    
+    async def get_events(self, instance_id: str, limit: int = 50) -> List[Dict]:
+        """Get instance state transition events"""
+        try:
+            if db.is_connected:
+                rows = await db.fetch(
+                    """SELECT id, from_state, to_state, message, actor_id, created_at
+                       FROM instance_events WHERE instance_id = $1 
+                       ORDER BY created_at DESC LIMIT $2""",
+                    instance_id, limit
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"❌ Error getting events: {e}")
+        
+        return []
+
+
+class HostService(BaseService):
+    """Business logic for compute hosts"""
+    
+    async def list_all(self, status: str = None, zone: str = None) -> List[Dict]:
+        """List all hosts with optional filters"""
+        try:
+            if db.is_connected:
+                query = """SELECT h.*, 
+                           (SELECT COUNT(*) FROM instances i WHERE i.host_id = h.id AND i.state != 'TERMINATED') as instance_count
+                           FROM hosts h WHERE 1=1"""
+                params = []
+                
+                if status:
+                    params.append(status)
+                    query += f" AND status = ${len(params)}"
+                
+                if zone:
+                    params.append(zone)
+                    query += f" AND zone = ${len(params)}"
+                
+                query += " ORDER BY name"
+                
+                rows = await db.fetch(query, *params)
+                
+                # Calculate available resources
+                result = []
+                for r in rows:
+                    host = dict(r)
+                    host["cpu_available"] = host["cpu_total"] - host["cpu_allocated"]
+                    host["memory_available_mb"] = host["memory_total_mb"] - host["memory_allocated_mb"]
+                    host["disk_available_gb"] = host["disk_total_gb"] - host["disk_allocated_gb"]
+                    result.append(host)
+                
+                return result
+        except Exception as e:
+            print(f"❌ Error listing hosts: {e}")
+        
+        return []
+    
+    async def get(self, host_id: str) -> Optional[Dict]:
+        """Get host details"""
+        try:
+            if db.is_connected:
+                row = await db.fetchrow(
+                    """SELECT h.*, 
+                       (SELECT COUNT(*) FROM instances i WHERE i.host_id = h.id AND i.state != 'TERMINATED') as instance_count
+                       FROM hosts h WHERE h.id = $1""",
+                    host_id
+                )
+                if row:
+                    host = dict(row)
+                    host["cpu_available"] = host["cpu_total"] - host["cpu_allocated"]
+                    host["memory_available_mb"] = host["memory_total_mb"] - host["memory_allocated_mb"]
+                    return host
+        except Exception as e:
+            print(f"❌ Error getting host: {e}")
+        
+        return None
+
+
 # Service factory - Dependency Inversion Principle
 class ServiceFactory:
     """Factory for creating service instances"""
@@ -901,3 +1178,16 @@ class ServiceFactory:
         if 'metrics' not in cls._instances:
             cls._instances['metrics'] = MetricsService()
         return cls._instances['metrics']
+    
+    @classmethod
+    def get_instance_service(cls) -> InstanceService:
+        if 'instance' not in cls._instances:
+            cls._instances['instance'] = InstanceService()
+        return cls._instances['instance']
+    
+    @classmethod
+    def get_host_service(cls) -> HostService:
+        if 'host' not in cls._instances:
+            cls._instances['host'] = HostService()
+        return cls._instances['host']
+
