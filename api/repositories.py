@@ -165,6 +165,18 @@ class ResourceRepository(BaseRepository):
             ) WHERE id = $1""",
             resource_id
         )
+    
+    async def update_spec(self, resource_id: str, spec_key: str, value: str) -> None:
+        """Update a specific key in the spec JSONB field"""
+        await db.execute(
+            """UPDATE resources SET 
+                spec = jsonb_set(COALESCE(spec::jsonb, '{}'), $2, $3::jsonb),
+                updated_at = NOW()
+            WHERE id = $1""",
+            resource_id, 
+            [spec_key],
+            json.dumps(value)
+        )
 
 
 class EventRuleRepository(BaseRepository):

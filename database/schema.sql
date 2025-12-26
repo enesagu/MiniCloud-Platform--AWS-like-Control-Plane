@@ -199,6 +199,94 @@ CREATE TABLE api_keys (
 );
 
 -- =====================================================
+-- COMPUTE (EC2-like Instance Management)
+-- =====================================================
+
+-- 14. HOSTS (Compute nodes in the cluster)
+CREATE TABLE hosts (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    name TEXT NOT NULL UNIQUE,
+    hostname TEXT NOT NULL,
+    ip_address TEXT,
+    zone TEXT DEFAULT 'default',
+    cpu_total INT NOT NULL DEFAULT 8,
+    cpu_allocated INT NOT NULL DEFAULT 0,
+    memory_total_mb INT NOT NULL DEFAULT 16384,
+    memory_allocated_mb INT NOT NULL DEFAULT 0,
+    disk_total_gb INT NOT NULL DEFAULT 500,
+    disk_allocated_gb INT NOT NULL DEFAULT 0,
+    status TEXT DEFAULT 'ACTIVE',
+    agent_version TEXT,
+    last_heartbeat TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_hosts_status ON hosts(status);
+
+-- 15. INSTANCES (Virtual machines/containers)
+CREATE TABLE instances (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    display_name TEXT,
+    
+    -- Compute Specs
+    cpu INT NOT NULL DEFAULT 2,
+    memory_mb INT NOT NULL DEFAULT 2048,
+    disk_gb INT NOT NULL DEFAULT 20,
+    image TEXT NOT NULL DEFAULT 'ubuntu:22.04',
+    
+    -- Placement
+    host_id TEXT REFERENCES hosts(id),
+    zone TEXT DEFAULT 'default',
+    
+    -- Network
+    network_segment TEXT DEFAULT 'default',
+    ip_address TEXT,
+    dns_name TEXT,
+    
+    -- State Machine (see InstanceState enum in workers/instance_workflows.py)
+    state TEXT NOT NULL DEFAULT 'REQUESTED',
+    state_message TEXT,
+    
+    -- Lifecycle
+    startup_script TEXT,
+    tags JSONB DEFAULT '{}',
+    
+    -- Workflow Tracking
+    workflow_run_id TEXT,
+    
+    -- Timestamps
+    requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    provisioned_at TIMESTAMP WITH TIME ZONE,
+    running_at TIMESTAMP WITH TIME ZONE,
+    stopped_at TIMESTAMP WITH TIME ZONE,
+    terminated_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(project_id, name)
+);
+
+CREATE INDEX idx_instances_project ON instances(project_id);
+CREATE INDEX idx_instances_state ON instances(state);
+CREATE INDEX idx_instances_host ON instances(host_id);
+
+-- 16. INSTANCE_EVENTS (State transition audit trail)
+CREATE TABLE instance_events (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+    from_state TEXT,
+    to_state TEXT NOT NULL,
+    message TEXT,
+    actor_id TEXT DEFAULT 'system',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_instance_events_instance ON instance_events(instance_id, created_at);
+
+-- =====================================================
 -- MESSAGING (SNS/SQS equivalent)
 -- =====================================================
 
@@ -304,3 +392,12 @@ ON CONFLICT (role_id, policy_id) DO NOTHING;
 INSERT INTO users (id, org_id, username, email, password_hash) VALUES
     ('user-admin', 'org-default', 'admin', 'admin@minicloud.local', 'hashed_admin123')
 ON CONFLICT (org_id, username) DO NOTHING;
+
+-- Default compute hosts (simulated cluster)
+INSERT INTO hosts (id, name, hostname, ip_address, zone, cpu_total, memory_total_mb, disk_total_gb, status) VALUES
+    ('host-001', 'compute-node-1', 'node1.minicloud.local', '192.168.1.101', 'zone-a', 16, 32768, 500, 'ACTIVE'),
+    ('host-002', 'compute-node-2', 'node2.minicloud.local', '192.168.1.102', 'zone-a', 16, 32768, 500, 'ACTIVE'),
+    ('host-003', 'compute-node-3', 'node3.minicloud.local', '192.168.1.103', 'zone-b', 32, 65536, 1000, 'ACTIVE'),
+    ('host-004', 'compute-node-4', 'node4.minicloud.local', '192.168.1.104', 'zone-b', 8, 16384, 250, 'ACTIVE')
+ON CONFLICT (name) DO NOTHING;
+

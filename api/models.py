@@ -277,3 +277,72 @@ class UsageResponse(BaseModel):
     function_invocations: int = 0
     workflow_runs: int = 0
     api_calls_24h: int = 0
+
+
+# =====================================================
+# COMPUTE - INSTANCES (EC2-like)
+# =====================================================
+
+class InstanceCreate(BaseModel):
+    """Create instance request - EC2 RunInstances equivalent"""
+    name: str
+    display_name: Optional[str] = None
+    cpu: int = 2
+    memory_mb: int = 2048
+    disk_gb: int = 20
+    image: str = "ubuntu:22.04"
+    network_segment: str = "default"
+    zone: Optional[str] = None
+    startup_script: Optional[str] = ""
+    tags: Optional[Dict[str, str]] = {}
+    sla_timeout_seconds: int = 120
+
+
+class InstanceResponse(BaseResponse):
+    """Instance details response"""
+    project_id: str
+    name: str
+    display_name: Optional[str]
+    cpu: int
+    memory_mb: int
+    disk_gb: int
+    image: str
+    state: str
+    ip_address: Optional[str]
+    dns_name: Optional[str]
+    host_id: Optional[str]
+    zone: Optional[str]
+    tags: Dict[str, str] = {}
+
+
+class InstanceStateChange(BaseModel):
+    """Instance state change request"""
+    action: str  # stop, start, terminate, reboot
+
+
+class InstanceListResponse(BaseModel):
+    """List instances response"""
+    instances: List[Dict[str, Any]]
+    count: int
+
+
+# =====================================================
+# COMPUTE - HOSTS
+# =====================================================
+
+class HostResponse(BaseModel):
+    """Compute host details"""
+    id: str
+    name: str
+    hostname: str
+    ip_address: Optional[str]
+    zone: str
+    cpu_total: int
+    cpu_allocated: int
+    cpu_available: int
+    memory_total_mb: int
+    memory_allocated_mb: int
+    memory_available_mb: int
+    status: str
+    instance_count: int = 0
+

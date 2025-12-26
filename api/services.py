@@ -275,13 +275,14 @@ class FunctionService(BaseService):
         self.resource_repo = RepositoryFactory.get_resource_repo()
     
     async def create(self, project_id: str, name: str, runtime: str = "python3.10",
-                    memory_mb: int = 128, timeout_seconds: int = 30) -> Dict:
+                    memory_mb: int = 128, timeout_seconds: int = 30, code: str = "") -> Dict:
         function_id = str(uuid.uuid4())
         spec = {
             "runtime": runtime,
             "memory_mb": memory_mb,
             "timeout_seconds": timeout_seconds,
-            "handler": "main.handler"
+            "handler": "main.handler",
+            "code": code
         }
         
         try:
@@ -320,6 +321,36 @@ class FunctionService(BaseService):
             print(f"❌ Error listing functions: {e}")
             return []
     
+    async def get(self, project_id: str, function_id: str) -> Dict:
+        """Get function by ID"""
+        try:
+            if db.is_connected:
+                result = await self.resource_repo.get_by_id(project_id, function_id)
+                if result:
+                    return result
+        except Exception as e:
+            print(f"❌ Error getting function: {e}")
+        
+        return {"error": "Function not found"}
+    
+    async def update_code(self, function_id: str, code: str) -> Dict:
+        """Update function code"""
+        try:
+            if db.is_connected:
+                await self.resource_repo.update_spec(function_id, "code", code)
+                print(f"📝 Function code updated: {function_id}")
+                return {
+                    "id": function_id,
+                    "status": "UPDATED",
+                    "message": "Function code deployed successfully"
+                }
+            else:
+                print(f"⚠️ Database not connected, code not saved")
+                return {"error": "Database not connected"}
+        except Exception as e:
+            print(f"❌ Error updating function code: {e}")
+            return {"error": str(e)}
+    
     async def delete(self, project_id: str, function_id: str) -> Dict:
         try:
             if db.is_connected:
@@ -332,21 +363,43 @@ class FunctionService(BaseService):
         return {"id": function_id, "status": "DELETED"}
     
     async def invoke(self, function_id: str, payload: Dict = None) -> Dict:
-        # Update invocation count
+        # Get function code
+        function_code = ""
         try:
             if db.is_connected:
+                # Update invocation count
                 await self.resource_repo.update_state(function_id, "invocation_count")
+                # Get function for code
+                func = await db.fetchrow(
+                    "SELECT spec FROM resources WHERE id = $1 AND type = 'function'",
+                    function_id
+                )
+                if func and func['spec']:
+                    import json
+                    spec = json.loads(func['spec']) if isinstance(func['spec'], str) else func['spec']
+                    function_code = spec.get('code', '')
         except Exception as e:
-            print(f"⚠️ Could not update invocation count: {e}")
+            print(f"⚠️ Could not get function: {e}")
         
         await self._log_audit("InvokeFunction", "function", function_id)
         
+        # Simulate execution (in real implementation, this would run the code)
         return {
             "function_id": function_id,
             "status": "SUCCESS",
-            "response": {"message": "Function executed", "input": payload or {}},
-            "duration_ms": 42
+            "response": {
+                "message": "Function executed successfully",
+                "input": payload or {},
+                "output": {"result": "Hello from MiniCloud Functions!"}
+            },
+            "duration_ms": 42,
+            "logs": [
+                f"START RequestId: {function_id[:8]}",
+                f"Processing input: {payload}",
+                "END RequestId"
+            ]
         }
+
 
 
 class WorkflowService(BaseService):
